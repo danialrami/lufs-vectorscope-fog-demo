@@ -6,7 +6,11 @@ step, no dependencies beyond a pinned CDN. Built by **Amacher** (LUFS design age
 Ramirez; the full design exploration lives in the `agent-knowledge` repo
 (`docs/product/reactive-backgrounds/`).
 
-> **TL;DR:** open `index.html`, click **Enable audio**, then hit **⚙ Dials** to play with it.
+**Live:** <https://vscope.lufs.audio> — an unlinked test deploy (not referenced from the other LUFS
+sites yet), kept around for live testing and as a dev surface.
+
+> **TL;DR:** visit <https://vscope.lufs.audio> (or open `index.html`), click **Enable audio**, then
+> hit **⚙ Dials** to play with it.
 
 ## What it is
 
