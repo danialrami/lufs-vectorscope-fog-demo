@@ -38,9 +38,11 @@
   .panel .acts{display:flex;gap:8px;margin-top:12px;border-top:1px solid var(--dim);padding-top:12px}
   .panel .acts .btn{flex:1;justify-content:center;font-size:.55rem;padding:8px 10px}
   .panel textarea{width:100%;height:74px;margin-top:10px;background:#0c0c0c;border:1px solid var(--dim);border-radius:8px;color:var(--teal);font-family:"Space Mono",monospace;font-size:.52rem;padding:8px;resize:none;cursor:text}
-  .cur-dot,.cur-ring{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;border-radius:50%;mix-blend-mode:difference}
-  .cur-dot{width:6px;height:6px;background:var(--teal)}.cur-ring{width:30px;height:30px;border:1px solid rgba(251,249,226,.7)}
-  @media (hover:none){.cur-dot,.cur-ring{display:none}html,body,.btn,input{cursor:auto}.row input[type=range]{cursor:pointer}}
+  .cur-core,.cur-orbit,.cur-ring{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;border-radius:50%;mix-blend-mode:difference}
+  .cur-core{width:6px;height:6px;background:var(--cream)}
+  .cur-orbit{width:4px;height:4px;background:var(--teal)}
+  .cur-ring{width:30px;height:30px;border:1px solid rgba(251,249,226,.7)}
+  @media (hover:none){.cur-core,.cur-orbit,.cur-ring{display:none}html,body,.btn,input{cursor:auto}.row input[type=range]{cursor:pointer}}
   @media (max-width:680px){.stat{display:none}.panel{width:84vw}}
   @media (max-width:540px){.bar{gap:7px;right:10px;top:10px}.btn{padding:8px 11px;font-size:.55rem;letter-spacing:.12em}.label{left:12px;top:10px;font-size:.55rem;letter-spacing:.22em}.panel{top:56px;right:8px;width:92vw;max-height:72vh;padding:13px}}
 </style>
@@ -54,7 +56,7 @@
     <button class="btn" id="play"><span id="ico">▶</span><span id="plab">Enable audio</span></button>
   </div>
   <div class="panel" id="panel"></div>
-  <div class="cur-dot"></div><div class="cur-ring"></div>
+  <div class="cur-core"></div><div class="cur-ring"></div><div class="cur-orbit"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script>
@@ -87,16 +89,24 @@
       reactSmooth:{v:0.30,min:0.02,max:1,step:0.01,g:'Reactivity',label:'Level smoothing'},
       idleDrift:{v:0.3,min:0,max:2,step:0.01,g:'Reactivity',label:'Pre-audio wisp intensity'},
       engageTime:{v:2.2,min:0,max:8,step:0.1,g:'Reactivity',label:'Audio engage ramp (s) — idle→reactive'},
+      cursorCoreSize:{v:6,min:0,max:24,step:0.5,g:'Cursor',label:'Center dot size (px)'},
+      cursorOrbitSize:{v:4,min:0,max:24,step:0.5,g:'Cursor',label:'Orbit dot size (base px)'},
+      cursorOrbitSpeed:{v:0.018,min:0,max:0.2,step:0.001,g:'Cursor',label:'Orbit speed (base)'},
+      cursorOrbitAudio:{v:0.05,min:0,max:0.5,step:0.005,g:'Cursor',label:'Bass → orbit speed'},
+      cursorOrbitAudioSize:{v:3,min:0,max:20,step:0.5,g:'Cursor',label:'Bass → orbit dot size'},
+      cursorIdleScale:{v:0.5,min:0.1,max:1,step:0.01,g:'Cursor',label:'Idle scale (slower/smaller when idle)'},
+      cursorRadius:{v:9,min:0,max:40,step:0.5,g:'Cursor',label:'Orbit radius padding (px)'},
     };
     const PV=k=>PARAMS[k].v;
 
     /* ---------- pointer + cursor ---------- */
     const P={tnx:0,tny:0,nx:0,ny:0};
     addEventListener('pointermove',e=>{P.tnx=(e.clientX/innerWidth)*2-1;P.tny=-((e.clientY/innerHeight)*2-1);},{passive:true});
-    // orbit cursor — ring lerp-follows; dot orbits the ring; bass speeds the orbit + pulses the dot (adapted from lufs.audio OrbitCursor)
+    // cursor — center dot (at the pointer) + lerp-following ring + a dot orbiting the ring.
+    // orbit speed/size scale with the engage envelope (slow+small when idle → fuller once engaged) plus live bass. All dial-controlled.
     (function(){
-      const dot=document.querySelector('.cur-dot'), ring=document.querySelector('.cur-ring');
-      if(('ontouchstart' in window)||navigator.maxTouchPoints>0){dot.style.display='none';ring.style.display='none';return;}
+      const core=document.querySelector('.cur-core'), ring=document.querySelector('.cur-ring'), orbit=document.querySelector('.cur-orbit');
+      if(('ontouchstart' in window)||navigator.maxTouchPoints>0){core.style.display=ring.style.display=orbit.style.display='none';return;}
       ring.style.transition='none';
       let tx=innerWidth/2,ty=innerHeight/2,rx=tx,ry=ty,ang=0,hover=false,active=false,cur=30;
       const SEL='.btn,input,textarea,a,[data-hover]';
@@ -109,11 +119,15 @@
         const tgt=active?14:(hover?18:30); cur+=(tgt-cur)*0.2;
         ring.style.width=ring.style.height=cur+'px';
         ring.style.transform=`translate(${rx}px,${ry}px) translate(-50%,-50%)`;
-        let bass=0; try{ bass=AUDIO.L.bass||0; }catch(e){}  // AUDIO is in TDZ on the first synchronous frame
-        ang+=0.03+bass*0.14;
-        const radius=cur/2+9+bass*6, dx=rx+Math.cos(ang)*radius, dy=ry+Math.sin(ang)*radius, ds=5+bass*7;
-        dot.style.width=dot.style.height=ds+'px';
-        dot.style.transform=`translate(${dx}px,${dy}px) translate(-50%,-50%)`;
+        let bass=0,eng=0; try{ bass=AUDIO.L.bass||0; eng=AUDIO.L.engage||0; }catch(e){}  // AUDIO in TDZ on first frame
+        const lvl=PV('cursorIdleScale')+(1-PV('cursorIdleScale'))*eng;   // idle → engaged scale
+        ang+=PV('cursorOrbitSpeed')*lvl + bass*PV('cursorOrbitAudio');
+        const radius=cur/2+PV('cursorRadius');
+        const ods=Math.max(0,PV('cursorOrbitSize')*lvl + bass*PV('cursorOrbitAudioSize'));
+        orbit.style.width=orbit.style.height=ods+'px';
+        orbit.style.transform=`translate(${rx+Math.cos(ang)*radius}px,${ry+Math.sin(ang)*radius}px) translate(-50%,-50%)`;
+        const cs=PV('cursorCoreSize'); core.style.width=core.style.height=cs+'px';
+        core.style.transform=`translate(${tx}px,${ty}px) translate(-50%,-50%)`;   // center dot at exact pointer
         requestAnimationFrame(l);
       })();
     })();
@@ -122,7 +136,7 @@
     const AUDIO=(function(){
       const STREAM="https://stream.lufsaud.io/api/stream/lufs-59b422dd",N=2048;
       let el=null,ctx=null,full=null,anL=null,anR=null,splitter=null,src=null,fb=null,tL=null,tR=null,corsOK=null,playing=false;
-      const L={bass:0,mid:0,treble:0,energy:0,centroid:0.5,rms:0,live:false};
+      const L={bass:0,mid:0,treble:0,energy:0,centroid:0.5,rms:0,live:false,engage:0};
       const wave={L:new Float32Array(N),R:new Float32Array(N),n:N};
       const statEl=document.getElementById('amode');
       function setStat(){ if(!playing){statEl.innerHTML='<span class="idle">idle wisp · tap play</span>';return;}
@@ -161,7 +175,7 @@
         L.live=haveLive;
         // engage envelope: ramp idle→reactive on enable (engageTime), fall back faster on pause
         const tgt=haveLive?1:0, tau=tgt>engage?Math.max(0.05,PV('engageTime')):0.6;
-        engage+=(tgt-engage)*(1-Math.exp(-dt/tau));
+        engage+=(tgt-engage)*(1-Math.exp(-dt/tau)); L.engage=engage;
         // blend idle↔live by engage, then ease into L
         const tb=ib+(lb-ib)*engage, tm=im+(lm-im)*engage, tt=it+(lt-it)*engage, te=ie+(le-ie)*engage, tc=ic+(lc-ic)*engage, trms=(iamp*0.5)+(lrms-iamp*0.5)*engage;
         L.bass+=(tb-L.bass)*sm; L.mid+=(tm-L.mid)*sm; L.treble+=(tt-L.treble)*sm; L.energy+=(te-L.energy)*(sm*0.9); L.centroid+=(tc-L.centroid)*0.2; L.rms=trms;

@@ -64,7 +64,9 @@ it's a fun dev surface and the place to re-tune before baking new defaults.
   "fogOpacity": 0.9, "fogBright": 0.65, "fogDrift": 0.06, "fogWarp": 1.2,
   "fogBloom": 0.32, "fogDensity": 1,
   "colorCycle": 0.01, "colorAudio": 3, "colorSlew": 0.2,
-  "reactSmooth": 0.3, "idleDrift": 0.3, "engageTime": 2.2
+  "reactSmooth": 0.3, "idleDrift": 0.3, "engageTime": 2.2,
+  "cursorCoreSize": 6, "cursorOrbitSize": 4, "cursorOrbitSpeed": 0.018,
+  "cursorOrbitAudio": 0.05, "cursorOrbitAudioSize": 3, "cursorIdleScale": 0.5, "cursorRadius": 9
 }
 ```
 
@@ -90,12 +92,18 @@ the waveform), then falls back faster on pause. Fully responsive (desktop → mo
 | Reactivity | Level smoothing | analyser easing |
 | | Pre-audio wisp | idle drift intensity |
 | | Audio engage ramp (s) | idle → reactive transition time on enable |
+| Cursor | Center dot size | the classic dot at the pointer |
+| | Orbit dot size / speed | the dot orbiting the ring (base, when engaged) |
+| | Bass → orbit speed / size | how much the music drives the orbit |
+| | Idle scale | how much slower/smaller the orbit is when idle vs engaged |
+| | Orbit radius padding | gap between ring edge and orbit path |
 
 ## Cursor
 
-Custom **orbit cursor** adapted from the lufs.audio site: a lerp-following ring with a dot that
-orbits it clockwise — here wired to the live **bass** so the orbit speeds up and the dot pulses with
-the music.
+Custom cursor: the classic **center dot** at the pointer, a lerp-following **ring**, and a dot that
+**orbits** the ring clockwise (adapted from the lufs.audio site). The orbit is calm by default and
+scales with the **engage** envelope + live **bass** — slowest/smallest when idle, fuller once the
+music is engaged. All of it is dial-controlled (Cursor group).
 
 ## Stack
 
