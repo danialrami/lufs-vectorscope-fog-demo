@@ -64,7 +64,7 @@ it's a fun dev surface and the place to re-tune before baking new defaults.
   "fogOpacity": 0.9, "fogBright": 0.65, "fogDrift": 0.06, "fogWarp": 1.2,
   "fogBloom": 0.32, "fogDensity": 1,
   "colorCycle": 0.01, "colorAudio": 3, "colorSlew": 0.2,
-  "reactSmooth": 0.3, "idleDrift": 0.3, "engageTime": 2.2,
+  "reactSmooth": 0.3, "idleDrift": 0.3, "engageTime": 2.2, "releaseTime": 4,
   "cursorCoreSize": 6, "cursorOrbitSize": 4, "cursorOrbitSpeed": 0.018,
   "cursorOrbitAudio": 0.05, "cursorOrbitAudioSize": 3, "cursorIdleScale": 0.5, "cursorRadius": 9
 }
@@ -72,7 +72,7 @@ it's a fun dev surface and the place to re-tune before baking new defaults.
 
 On **Enable audio**, the scene doesn't snap to full reactivity — it **ramps from the idle wisp into
 the live signal** over `engageTime` seconds (an exponential engage envelope on both the bands and
-the waveform), then falls back faster on pause. Fully responsive (desktop → mobile), honours
+the waveform), then eases back over a separate `releaseTime` (default 4s) on pause. Fully responsive (desktop → mobile), honours
 `prefers-reduced-motion`, and the custom cursor hides on touch.
 
 | Group | Dial | Meaning |
@@ -92,6 +92,7 @@ the waveform), then falls back faster on pause. Fully responsive (desktop → mo
 | Reactivity | Level smoothing | analyser easing |
 | | Pre-audio wisp | idle drift intensity |
 | | Audio engage ramp (s) | idle → reactive transition time on enable |
+| | Audio release ramp (s) | reactive → idle transition time on pause |
 | Cursor | Center dot size | the classic dot at the pointer |
 | | Orbit dot size / speed | the dot orbiting the ring (base, when engaged) |
 | | Bass → orbit speed / size | how much the music drives the orbit |

@@ -89,6 +89,7 @@
       reactSmooth:{v:0.30,min:0.02,max:1,step:0.01,g:'Reactivity',label:'Level smoothing'},
       idleDrift:{v:0.3,min:0,max:2,step:0.01,g:'Reactivity',label:'Pre-audio wisp intensity'},
       engageTime:{v:2.2,min:0,max:8,step:0.1,g:'Reactivity',label:'Audio engage ramp (s) — idle→reactive'},
+      releaseTime:{v:4,min:0,max:12,step:0.1,g:'Reactivity',label:'Audio release ramp (s) — reactive→idle'},
       cursorCoreSize:{v:6,min:0,max:24,step:0.5,g:'Cursor',label:'Center dot size (px)'},
       cursorOrbitSize:{v:4,min:0,max:24,step:0.5,g:'Cursor',label:'Orbit dot size (base px)'},
       cursorOrbitSpeed:{v:0.018,min:0,max:0.2,step:0.001,g:'Cursor',label:'Orbit speed (base)'},
@@ -174,7 +175,7 @@
         }
         L.live=haveLive;
         // engage envelope: ramp idle→reactive on enable (engageTime), fall back faster on pause
-        const tgt=haveLive?1:0, tau=tgt>engage?Math.max(0.05,PV('engageTime')):0.6;
+        const tgt=haveLive?1:0, tau=tgt>engage?Math.max(0.05,PV('engageTime')):Math.max(0.05,PV('releaseTime'));
         engage+=(tgt-engage)*(1-Math.exp(-dt/tau)); L.engage=engage;
         // blend idle↔live by engage, then ease into L
         const tb=ib+(lb-ib)*engage, tm=im+(lm-im)*engage, tt=it+(lt-it)*engage, te=ie+(le-ie)*engage, tc=ic+(lc-ic)*engage, trms=(iamp*0.5)+(lrms-iamp*0.5)*engage;
