@@ -42,6 +42,7 @@
   .cur-dot{width:6px;height:6px;background:var(--teal)}.cur-ring{width:30px;height:30px;border:1px solid rgba(251,249,226,.7)}
   @media (hover:none){.cur-dot,.cur-ring{display:none}html,body,.btn,input{cursor:auto}.row input[type=range]{cursor:pointer}}
   @media (max-width:680px){.stat{display:none}.panel{width:84vw}}
+  @media (max-width:540px){.bar{gap:7px;right:10px;top:10px}.btn{padding:8px 11px;font-size:.55rem;letter-spacing:.12em}.label{left:12px;top:10px;font-size:.55rem;letter-spacing:.22em}.panel{top:56px;right:8px;width:92vw;max-height:72vh;padding:13px}}
 </style>
 </head>
 <body>
@@ -85,6 +86,7 @@
       colorSlew:{v:0.2,min:0.02,max:8,step:0.01,g:'Colour rotation (slew)',label:'Slew rate (lower = more relaxed)'},
       reactSmooth:{v:0.30,min:0.02,max:1,step:0.01,g:'Reactivity',label:'Level smoothing'},
       idleDrift:{v:0.3,min:0,max:2,step:0.01,g:'Reactivity',label:'Pre-audio wisp intensity'},
+      engageTime:{v:2.2,min:0,max:8,step:0.1,g:'Reactivity',label:'Audio engage ramp (s) — idle→reactive'},
     };
     const PV=k=>PARAMS[k].v;
 
@@ -107,7 +109,7 @@
         const tgt=active?14:(hover?18:30); cur+=(tgt-cur)*0.2;
         ring.style.width=ring.style.height=cur+'px';
         ring.style.transform=`translate(${rx}px,${ry}px) translate(-50%,-50%)`;
-        const bass=(typeof AUDIO!=='undefined'&&AUDIO.L)?AUDIO.L.bass:0;
+        let bass=0; try{ bass=AUDIO.L.bass||0; }catch(e){}  // AUDIO is in TDZ on the first synchronous frame
         ang+=0.03+bass*0.14;
         const radius=cur/2+9+bass*6, dx=rx+Math.cos(ang)*radius, dy=ry+Math.sin(ang)*radius, ds=5+bass*7;
         dot.style.width=dot.style.height=ds+'px';
@@ -141,30 +143,32 @@
       }
       function band(a,lo,hi){let s=0,n=0;for(let i=lo;i<hi&&i<a.length;i++){s+=a[i];n++;}return n?s/n/255:0;}
       function readFloat(an,arr){if(an.getFloatTimeDomainData)an.getFloatTimeDomainData(arr);else{const b=new Uint8Array(arr.length);an.getByteTimeDomainData(b);for(let i=0;i<arr.length;i++)arr[i]=(b[i]-128)/128;}}
-      let idleT=0;
+      let idleT=0, engage=0;
       function update(dt){
-        const sm=PV('reactSmooth');
+        const sm=PV('reactSmooth'); idleT+=dt; const id=PV('idleDrift');
+        // idle targets (always computed → the wisp the page rests in)
+        const ib=(0.05+0.035*Math.sin(idleT*0.25))*id, im=(0.10+0.05*Math.sin(idleT*0.4))*id, it=(0.07+0.04*Math.sin(idleT*0.6))*id;
+        const ie=(ib+im+it)/3, ic=0.5+0.12*Math.sin(idleT*0.3), iamp=0.045*id;
+        // live targets (default to idle when there's no audio data)
+        let lb=ib,lm=im,lt=it,le=ie,lc=ic,lrms=iamp*0.5,haveLive=false;
         if(playing&&full){
           full.getByteFrequencyData(fb);
           const b=band(fb,1,8),m=band(fb,8,42),t=band(fb,42,140),e=band(fb,1,160);
-          L.live=(b+m+t)>0.004;
-          if(L.live){
-            L.bass+=(b-L.bass)*sm;L.mid+=(m-L.mid)*sm;L.treble+=(t-L.treble)*sm;L.energy+=(e-L.energy)*(sm*0.9);
-            let num=0,den=0;for(let i=1;i<fb.length;i++){num+=i*fb[i];den+=fb[i];}const c=den>0?(num/den)/fb.length:0.5;L.centroid+=(c-L.centroid)*0.2;
-            readFloat(anL,tL);readFloat(anR,tR);let rms=0;for(let i=0;i<N;i++){wave.L[i]=tL[i];wave.R[i]=tR[i];rms+=tL[i]*tL[i]+tR[i]*tR[i];}
-            L.rms=Math.sqrt(rms/(2*N));setStat();return;
-          }
-          setStat();
-        } else L.live=false;
-        // ---- calm idle wisp (no beat simulation) ----
-        idleT+=dt;const id=PV('idleDrift');
-        L.bass+=((0.05+0.035*Math.sin(idleT*0.25))*id-L.bass)*0.05;
-        L.mid+=((0.10+0.05*Math.sin(idleT*0.4))*id-L.mid)*0.05;
-        L.treble+=((0.07+0.04*Math.sin(idleT*0.6))*id-L.treble)*0.05;
-        L.energy+=(((L.bass+L.mid+L.treble)/3)-L.energy)*0.05;
-        L.centroid+=((0.5+0.12*Math.sin(idleT*0.3))-L.centroid)*0.05;
-        const amp=0.045*id;L.rms=amp*0.5;
-        for(let i=0;i<N;i++){const u=i/N*Math.PI*2.0;wave.L[i]=Math.sin(u*2.0+idleT*0.7)*amp;wave.R[i]=Math.sin(u*2.0+idleT*0.72+0.15)*amp;}
+          if((b+m+t)>0.004){ haveLive=true; lb=b;lm=m;lt=t;le=e;
+            let num=0,den=0;for(let i=1;i<fb.length;i++){num+=i*fb[i];den+=fb[i];} lc=den>0?(num/den)/fb.length:0.5;
+            readFloat(anL,tL);readFloat(anR,tR);let rms=0;for(let i=0;i<N;i++)rms+=tL[i]*tL[i]+tR[i]*tR[i]; lrms=Math.sqrt(rms/(2*N)); }
+        }
+        L.live=haveLive;
+        // engage envelope: ramp idle→reactive on enable (engageTime), fall back faster on pause
+        const tgt=haveLive?1:0, tau=tgt>engage?Math.max(0.05,PV('engageTime')):0.6;
+        engage+=(tgt-engage)*(1-Math.exp(-dt/tau));
+        // blend idle↔live by engage, then ease into L
+        const tb=ib+(lb-ib)*engage, tm=im+(lm-im)*engage, tt=it+(lt-it)*engage, te=ie+(le-ie)*engage, tc=ic+(lc-ic)*engage, trms=(iamp*0.5)+(lrms-iamp*0.5)*engage;
+        L.bass+=(tb-L.bass)*sm; L.mid+=(tm-L.mid)*sm; L.treble+=(tt-L.treble)*sm; L.energy+=(te-L.energy)*(sm*0.9); L.centroid+=(tc-L.centroid)*0.2; L.rms=trms;
+        // waveform: blend the idle wisp with live samples by the same engage envelope
+        for(let i=0;i<N;i++){const u=i/N*Math.PI*2.0; const iwL=Math.sin(u*2.0+idleT*0.7)*iamp, iwR=Math.sin(u*2.0+idleT*0.72+0.15)*iamp;
+          const lwL=haveLive?tL[i]:iwL, lwR=haveLive?tR[i]:iwR; wave.L[i]=iwL+(lwL-iwL)*engage; wave.R[i]=iwR+(lwR-iwR)*engage; }
+        setStat();
       }
       document.getElementById('play').addEventListener('click',toggle);
       return {L,wave,update,get playing(){return playing;}};
@@ -287,7 +291,8 @@
       document.getElementById('dialBtn').addEventListener('click',()=>{const open=panel.classList.toggle('open');document.getElementById('dialBtn').textContent=open?'✕ Dials':'⚙ Dials';});
     })();
 
-    addEventListener('resize',()=>{sz();fit();fogMat.uniforms.uAspect.value=innerWidth/innerHeight;});
+    function onResize(){sz();fit();fogMat.uniforms.uAspect.value=innerWidth/innerHeight;}
+    addEventListener('resize',onResize); addEventListener('orientationchange',onResize);
     const clock=new THREE.Clock();
     function loop(){requestAnimationFrame(loop);const dt=Math.min(clock.getDelta(),0.05);const t=REDUCED?6.0:clock.elapsedTime;
       AUDIO.update(dt);frame(t,dt);renderer.render(scene,cam);}

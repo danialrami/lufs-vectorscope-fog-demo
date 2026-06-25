@@ -64,9 +64,14 @@ it's a fun dev surface and the place to re-tune before baking new defaults.
   "fogOpacity": 0.9, "fogBright": 0.65, "fogDrift": 0.06, "fogWarp": 1.2,
   "fogBloom": 0.32, "fogDensity": 1,
   "colorCycle": 0.01, "colorAudio": 3, "colorSlew": 0.2,
-  "reactSmooth": 0.3, "idleDrift": 0.3
+  "reactSmooth": 0.3, "idleDrift": 0.3, "engageTime": 2.2
 }
 ```
+
+On **Enable audio**, the scene doesn't snap to full reactivity — it **ramps from the idle wisp into
+the live signal** over `engageTime` seconds (an exponential engage envelope on both the bands and
+the waveform), then falls back faster on pause. Fully responsive (desktop → mobile), honours
+`prefers-reduced-motion`, and the custom cursor hides on touch.
 
 | Group | Dial | Meaning |
 |---|---|---|
@@ -84,6 +89,7 @@ it's a fun dev surface and the place to re-tune before baking new defaults.
 | | Slew rate | how fast colour reacts (lower = calmer) |
 | Reactivity | Level smoothing | analyser easing |
 | | Pre-audio wisp | idle drift intensity |
+| | Audio engage ramp (s) | idle → reactive transition time on enable |
 
 ## Cursor
 
