@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<title>lufs. — fluid mesh / point-cloud bg proto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@500;700;800&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#111111;
+    --teal:#78BEBA; --blue:#2069af; --gold:#E7B225; --rust:#D35233;
+    --cream:#fbf9e2; --muted:rgba(251,249,226,.62); --dim:rgba(251,249,226,.12);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--ground);overflow:hidden;color:var(--cream);
+    font-family:"Public Sans","Host Grotesk",system-ui,sans-serif;cursor:none}
+  #gl{position:fixed;inset:0;width:100vw;height:100vh;display:block;z-index:0}
+  /* film grain */
+  .grain{position:fixed;inset:-50%;width:200%;height:200%;z-index:1;pointer-events:none;
+    opacity:.07;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    animation:grain 7s steps(6) infinite}
+  @keyframes grain{0%{transform:translate(0,0)}20%{transform:translate(-6%,4%)}40%{transform:translate(5%,-5%)}
+    60%{transform:translate(-4%,6%)}80%{transform:translate(6%,3%)}100%{transform:translate(0,0)}}
+  /* edge veil to keep it grounded */
+  .veil{position:fixed;inset:0;z-index:2;pointer-events:none;
+    background:radial-gradient(120% 120% at 50% 45%,transparent 55%,rgba(8,8,8,.55) 100%)}
+
+  /* corner identity label */
+  .label{position:fixed;left:clamp(16px,3vw,34px);top:clamp(14px,3vh,28px);z-index:20;
+    font-family:"Space Mono",monospace;text-transform:uppercase;letter-spacing:.28em;
+    font-size:.62rem;color:var(--muted);pointer-events:none;line-height:1.9}
+  .label b{color:var(--cream);font-weight:400}
+  .label .dot{color:var(--teal)}
+  .label .name{color:var(--muted);letter-spacing:.32em}
+
+  /* mode switcher */
+  .switch{position:fixed;left:50%;bottom:clamp(18px,4vh,40px);transform:translateX(-50%);
+    z-index:20;display:flex;gap:8px;padding:7px;border:1px solid var(--dim);border-radius:999px;
+    background:rgba(12,12,12,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  .chip{font-family:"Space Mono",monospace;text-transform:uppercase;letter-spacing:.18em;
+    font-size:.6rem;color:var(--muted);border:1px solid transparent;background:transparent;
+    padding:9px 15px;border-radius:999px;cursor:none;transition:.22s ease;white-space:nowrap}
+  .chip:hover{color:var(--cream);border-color:var(--dim)}
+  .chip.active{color:var(--ground);background:var(--teal);border-color:var(--teal);font-weight:700}
+  .chip small{display:block;font-size:.5rem;letter-spacing:.1em;opacity:.7;margin-top:2px;font-weight:400}
+  .chip.active small{opacity:.85}
+
+  .meta{position:fixed;right:clamp(16px,3vw,34px);bottom:clamp(18px,4vh,40px);z-index:20;
+    font-family:"Space Mono",monospace;text-transform:uppercase;letter-spacing:.22em;
+    font-size:.56rem;color:var(--muted);text-align:right;pointer-events:none;line-height:1.8}
+  .meta b{color:var(--teal);font-weight:400}
+
+  /* custom cursor */
+  .cur-dot,.cur-ring{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;border-radius:50%;
+    mix-blend-mode:difference}
+  .cur-dot{width:6px;height:6px;background:var(--cream)}
+  .cur-ring{width:30px;height:30px;border:1px solid rgba(251,249,226,.7);transition:width .2s,height .2s}
+  .cur-ring.hot{width:52px;height:52px}
+  @media (hover:none){.cur-dot,.cur-ring{display:none}html,body,.chip{cursor:auto}}
+
+  @media (max-width:680px){.chip{padding:8px 11px;font-size:.55rem}.chip small{display:none}.meta{display:none}}
+</style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div class="veil"></div>
+  <div class="grain"></div>
+
+  <div class="label">
+    <div><b>lufs<span class="dot">.</span></b></div>
+    <div class="name">background proto</div>
+  </div>
+
+  <div class="meta">
+    <div>teal-led · single accent</div>
+    <div><b id="modeName">fluid field</b></div>
+    <div>move cursor →</div>
+  </div>
+
+  <div class="switch" id="switch">
+    <button class="chip active" data-mode="fluid">Fluid Field<small>continuous shader</small></button>
+    <button class="chip" data-mode="points">Point Mesh<small>wave surface</small></button>
+    <button class="chip" data-mode="morph">Morph Bloom<small>shape cloud</small></button>
+  </div>
+
+  <div class="cur-dot"></div>
+  <div class="cur-ring"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script>
+  (function(){
+    if(!window.THREE){document.body.style.background="#111";console.error("three.js failed to load");return;}
+    const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // ---------- shared renderer ----------
+    const canvas = document.getElementById('gl');
+    const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
+    renderer.setClearColor(0x111111, 1);
+    const PR = Math.min(window.devicePixelRatio||1, 2);
+    renderer.setPixelRatio(PR);
+    function sz(){renderer.setSize(window.innerWidth, window.innerHeight, false);}
+    sz();
+
+    // ---------- brand palette (linear-ish rgb) ----------
+    const C = {
+      ground:[0.066,0.066,0.066],
+      teal:[0.471,0.745,0.729],
+      tealDeep:[0.16,0.34,0.34],
+      blue:[0.125,0.412,0.686],
+      gold:[0.906,0.698,0.145],
+      rust:[0.827,0.322,0.200],
+      cream:[0.984,0.976,0.886]
+    };
+
+    // ---------- eased pointer ----------
+    const P = {tnx:0,tny:0,nx:0,ny:0, downBoost:0};
+    window.addEventListener('pointermove',e=>{
+      P.tnx = (e.clientX/window.innerWidth)*2-1;
+      P.tny = -((e.clientY/window.innerHeight)*2-1);
+    },{passive:true});
+
+    // custom cursor
+    (function(){
+      const d=document.querySelector('.cur-dot'), r=document.querySelector('.cur-ring');
+      let mx=innerWidth/2,my=innerHeight/2,rx=mx,ry=my;
+      addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;
+        d.style.transform=`translate(${mx}px,${my}px) translate(-50%,-50%)`;});
+      (function l(){rx+=(mx-rx)*.18;ry+=(my-ry)*.18;
+        r.style.transform=`translate(${rx}px,${ry}px) translate(-50%,-50%)`;requestAnimationFrame(l);})();
+      addEventListener('mouseover',e=>{if(e.target.closest('[data-hover],.chip'))r.classList.add('hot');});
+      addEventListener('mouseout',e=>{if(e.target.closest('[data-hover],.chip'))r.classList.remove('hot');});
+    })();
+
+    // ---------- GLSL: simplex noise + fbm ----------
+    const NOISE = `
+      vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+      vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+      vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+      vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+      float snoise(vec3 v){
+        const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+        vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+        vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+        vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+        i=mod289(i);
+        vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+        float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+        vec4 j=p-49.0*floor(p*ns.z*ns.z);
+        vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+        vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+        vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+        vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));
+        vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+        vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+        vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+        p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
+        vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;
+        return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+      }
+      float fbm(vec3 p){ float s=0.0,a=0.5; for(int i=0;i<5;i++){ s+=a*snoise(p); p*=2.02; a*=0.5; } return s*0.5+0.5; }
+    `;
+
+    // shared brand color ramp for the fluid quad (single-accent teal discipline)
+    const BRANDCOL = `
+      vec3 brandColor(float t, float q){
+        vec3 g=vec3(0.066,0.066,0.066);
+        vec3 td=vec3(0.16,0.34,0.34);
+        vec3 tl=vec3(0.471,0.745,0.729);
+        vec3 bl=vec3(0.125,0.412,0.686);
+        vec3 go=vec3(0.906,0.698,0.145);
+        vec3 ru=vec3(0.827,0.322,0.200);
+        vec3 c=mix(g,td,smoothstep(0.12,0.5,t));
+        c=mix(c,tl,smoothstep(0.42,0.92,t));
+        c=mix(c,bl,smoothstep(0.78,1.0,t)*0.55);          // blue only in brightest cores
+        c+=go*smoothstep(0.86,1.0,q)*0.10;                // rare gold seasoning
+        c+=ru*smoothstep(0.9,1.0,1.0-q)*0.07;             // rare rust seasoning
+        return c;
+      }
+    `;
+
+    // ================= fullscreen fluid quad (used by Fluid Field + Morph ground) =================
+    function makeFluidMaterial(opts){
+      opts=opts||{};
+      return new THREE.ShaderMaterial({
+        depthTest:false, depthWrite:false,
+        uniforms:{
+          uTime:{value:0}, uAspect:{value:innerWidth/innerHeight},
+          uMouse:{value:new THREE.Vector2(0.5,0.5)},
+          uScale:{value:opts.scale||2.4}, uSpeed:{value:opts.speed||0.06},
+          uDim:{value:opts.dim||1.0}, uWarp:{value:opts.warp||4.0},
+          uGlow:{value:opts.glow||0.28}
+        },
+        vertexShader:`varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }`,
+        fragmentShader: NOISE + BRANDCOL + `
+          varying vec2 vUv;
+          uniform float uTime,uAspect,uScale,uSpeed,uDim,uWarp,uGlow; uniform vec2 uMouse;
+          void main(){
+            vec2 uv=vUv; vec2 auv=(uv-0.5); auv.x*=uAspect;
+            vec2 am=(uMouse-0.5); am.x*=uAspect;
+            float md=length(auv-am);
+            float t=uTime*uSpeed;
+            vec2 p=auv*uScale;
+            // mouse bends the flow field
+            p+=am*0.6*exp(-md*md*2.5);
+            vec3 q1=vec3(p, t);
+            vec2 q=vec2(fbm(q1), fbm(vec3(p+vec2(5.2,1.3),t)));
+            vec2 r=vec2(fbm(vec3(p+uWarp*q+vec2(1.7,9.2),t*1.1)),
+                        fbm(vec3(p+uWarp*q+vec2(8.3,2.8),t*1.1)));
+            float f=fbm(vec3(p+uWarp*r, t*0.8));
+            float qq=clamp(q.x*0.6+r.y*0.6,0.0,1.0);
+            vec3 col=brandColor(f,qq);
+            // teal cursor bloom
+            float glow=exp(-md*md*5.5);
+            col+=vec3(0.471,0.745,0.729)*glow*uGlow;
+            // grain
+            float gr=fract(sin(dot(uv*(1.0+uTime),vec2(12.9898,78.233)))*43758.5453);
+            col+=(gr-0.5)*0.035;
+            // vignette to ground
+            float vig=smoothstep(1.18,0.25,length(auv));
+            col=mix(vec3(0.066),col,clamp(vig+0.12,0.0,1.0));
+            col*=uDim;
+            gl_FragColor=vec4(col,1.0);
+          }`
+      });
+    }
+    const QUAD = new THREE.PlaneBufferGeometry(2,2);
+
+    // ---------- MODE: FLUID FIELD ----------
+    function modeFluid(){
+      const scene=new THREE.Scene(); const cam=new THREE.Camera();
+      const mat=makeFluidMaterial({scale:2.4,speed:0.06,glow:0.30,warp:4.2});
+      const mesh=new THREE.Mesh(QUAD,mat); mesh.frustumCulled=false; scene.add(mesh);
+      return {
+        scene,cam,
+        update(t){ mat.uniforms.uTime.value=t; mat.uniforms.uAspect.value=innerWidth/innerHeight;
+          mat.uniforms.uMouse.value.set(P.nx*0.5+0.5, P.ny*0.5+0.5); },
+        dispose(){ mat.dispose(); }
+      };
+    }
+
+    // ---------- MODE: POINT MESH (gradient as undulating point wave) ----------
+    function modePoints(){
+      const scene=new THREE.Scene();
+      const cam=new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 200);
+      cam.position.set(0,0,20);
+      const halfH=Math.tan(55*Math.PI/360)*20, halfW=halfH*(innerWidth/innerHeight);
+      const SPANX=halfW*2.7, SPANY=halfH*2.7;
+      const cols=Math.min(300, Math.round(170*(innerWidth/innerHeight))+90), rows=170;
+      const N=cols*rows;
+      const pos=new Float32Array(N*3), col=new Float32Array(N*3), seed=new Float32Array(N);
+      let k=0;
+      for(let j=0;j<rows;j++)for(let i=0;i<cols;i++){
+        const x=(i/(cols-1)-0.5)*SPANX, y=(j/(rows-1)-0.5)*SPANY;
+        pos[k*3]=x; pos[k*3+1]=y; pos[k*3+2]=0;
+        const r=Math.random(); let c;
+        if(r<0.66){ const m=0.4+Math.random()*0.6; c=[C.tealDeep[0]+(C.teal[0]-C.tealDeep[0])*m, C.tealDeep[1]+(C.teal[1]-C.tealDeep[1])*m, C.tealDeep[2]+(C.teal[2]-C.tealDeep[2])*m]; }
+        else if(r<0.88){ c=C.blue; }
+        else if(r<0.96){ c=C.gold; }
+        else { c=C.rust; }
+        col[k*3]=c[0]; col[k*3+1]=c[1]; col[k*3+2]=c[2];
+        seed[k]=Math.random()*6.28;
+        k++;
+      }
+      const geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+      geo.setAttribute('aColor',new THREE.BufferAttribute(col,3));
+      geo.setAttribute('aSeed',new THREE.BufferAttribute(seed,1));
+      const mat=new THREE.ShaderMaterial({
+        transparent:true, depthTest:true, depthWrite:false, blending:THREE.NormalBlending,
+        uniforms:{ uTime:{value:0}, uSize:{value:2.3*PR}, uPR:{value:PR},
+          uMouse:{value:new THREE.Vector2(0,0)}, uAmp:{value:2.6}, uHalf:{value:new THREE.Vector2(halfW,halfH)} },
+        vertexShader: NOISE + `
+          attribute vec3 aColor; attribute float aSeed;
+          uniform float uTime,uSize,uPR,uAmp; uniform vec2 uMouse;
+          varying vec3 vCol; varying float vGlow;
+          void main(){
+            vec3 p=position;
+            float n=snoise(vec3(p.xy*0.09, uTime*0.18))*1.0
+                   +snoise(vec3(p.xy*0.22+10.0, uTime*0.12))*0.45;
+            p.z+=n*uAmp;
+            // cursor repel (screen-plane radial push + lift)
+            vec2 d=p.xy-uMouse; float dist=length(d);
+            float infl=exp(-dist*dist*0.012);
+            p.xy+=normalize(d+0.0001)*infl*3.2;
+            p.z+=infl*4.5;
+            vGlow=smoothstep(-uAmp,uAmp,p.z)*0.6+infl*0.8;
+            vCol=aColor;
+            vec4 mv=modelViewMatrix*vec4(p,1.0);
+            gl_PointSize=uSize*(60.0/-mv.z)*(0.7+vGlow*0.9);
+            gl_Position=projectionMatrix*mv;
+          }`,
+        fragmentShader:`
+          precision mediump float; varying vec3 vCol; varying float vGlow;
+          void main(){
+            vec2 c=gl_PointCoord-0.5; float d=length(c);
+            if(d>0.5) discard;
+            float a=smoothstep(0.5,0.04,d);
+            vec3 col=vCol*(0.55+vGlow*0.9);
+            gl_FragColor=vec4(col, a*(0.5+vGlow*0.5));
+          }`
+      });
+      const pts=new THREE.Points(geo,mat); pts.frustumCulled=false; pts.rotation.x=-0.18; scene.add(pts);
+      return {
+        scene,cam,
+        update(t){
+          mat.uniforms.uTime.value=t;
+          const mw=new THREE.Vector2(P.nx*halfW, P.ny*halfH);
+          mat.uniforms.uMouse.value.lerp(mw,0.12);
+          pts.rotation.y = P.nx*0.12; pts.rotation.x=-0.18 + P.ny*0.06;
+        },
+        resize(){ cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix(); },
+        dispose(){ geo.dispose(); mat.dispose(); }
+      };
+    }
+
+    // ---------- MODE: MORPH BLOOM (morphing brand-shape cloud over gradient ground) ----------
+    function modeMorph(){
+      const scene=new THREE.Scene();
+      const cam=new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 200);
+      cam.position.set(0,0,26);
+
+      // ground: dim fluid quad, always behind
+      const groundMat=makeFluidMaterial({scale:1.9,speed:0.045,dim:0.5,glow:0.16,warp:3.4});
+      const ground=new THREE.Mesh(QUAD,groundMat); ground.frustumCulled=false; ground.renderOrder=-1; scene.add(ground);
+
+      // morphing point cloud
+      const N=44000, R=9.5;
+      function shapeSphere(){const a=new Float32Array(N*3);for(let i=0;i<N;i++){const u=Math.random(),v=Math.random();const th=2*Math.PI*u,ph=Math.acos(2*v-1);a[i*3]=R*Math.sin(ph)*Math.cos(th);a[i*3+1]=R*Math.sin(ph)*Math.sin(th);a[i*3+2]=R*Math.cos(ph);}return a;}
+      function shapeTorus(){const a=new Float32Array(N*3);const Rr=8.0,rr=2.9;for(let i=0;i<N;i++){const u=2*Math.PI*Math.random(),v=2*Math.PI*Math.random();a[i*3]=(Rr+rr*Math.cos(v))*Math.cos(u);a[i*3+1]=(Rr+rr*Math.cos(v))*Math.sin(u);a[i*3+2]=rr*Math.sin(v);}return a;}
+      function shapeWave(){const a=new Float32Array(N*3);for(let i=0;i<N;i++){const x=(Math.random()-0.5)*26,y=(Math.random()-0.5)*16;a[i*3]=x;a[i*3+1]=y;a[i*3+2]=Math.sin(x*0.5)*1.6+Math.cos(y*0.6)*1.6;}return a;}
+      function shapeDisc(){const a=new Float32Array(N*3);for(let i=0;i<N;i++){const ang=2*Math.PI*Math.random(),rad=R*Math.sqrt(Math.random());a[i*3]=Math.cos(ang)*rad;a[i*3+1]=Math.sin(ang)*rad;a[i*3+2]=(Math.random()-0.5)*0.8;}return a;}
+      const shapes=[shapeSphere(),shapeTorus(),shapeWave(),shapeDisc()];
+      let si=0;
+
+      const col=new Float32Array(N*3), seed=new Float32Array(N);
+      for(let i=0;i<N;i++){
+        const r=Math.random(); let c;
+        if(r<0.64){ const m=0.45+Math.random()*0.55; c=[C.tealDeep[0]+(C.teal[0]-C.tealDeep[0])*m, C.tealDeep[1]+(C.teal[1]-C.tealDeep[1])*m, C.tealDeep[2]+(C.teal[2]-C.tealDeep[2])*m]; }
+        else if(r<0.86){ c=C.blue; } else if(r<0.95){ c=C.gold; } else { c=C.rust; }
+        col[i*3]=c[0];col[i*3+1]=c[1];col[i*3+2]=c[2]; seed[i]=Math.random()*6.28;
+      }
+      const geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.BufferAttribute(shapes[0].slice(),3));
+      geo.setAttribute('aTarget',new THREE.BufferAttribute(shapes[1].slice(),3));
+      geo.setAttribute('aColor',new THREE.BufferAttribute(col,3));
+      geo.setAttribute('aSeed',new THREE.BufferAttribute(seed,1));
+      const mat=new THREE.ShaderMaterial({
+        transparent:true, depthTest:true, depthWrite:false, blending:THREE.NormalBlending,
+        uniforms:{ uTime:{value:0}, uMorph:{value:0}, uSize:{value:2.1*PR} },
+        vertexShader: NOISE + `
+          attribute vec3 aTarget; attribute vec3 aColor; attribute float aSeed;
+          uniform float uTime,uMorph,uSize; varying vec3 vCol; varying float vGlow;
+          void main(){
+            vec3 a=position, b=aTarget;
+            vec3 p=mix(a,b,uMorph);
+            float bloom=sin(uMorph*3.14159);
+            p+=vec3(snoise(vec3(p.xy*0.13+aSeed,uTime*0.2)))*bloom*2.4;
+            // gentle idle drift
+            p+=vec3(snoise(vec3(p.xy*0.05,uTime*0.1)))*0.5;
+            vGlow=0.4+bloom*0.5;
+            vCol=aColor;
+            vec4 mv=modelViewMatrix*vec4(p,1.0);
+            gl_PointSize=uSize*(120.0/-mv.z);
+            gl_Position=projectionMatrix*mv;
+          }`,
+        fragmentShader:`
+          precision mediump float; varying vec3 vCol; varying float vGlow;
+          void main(){
+            vec2 c=gl_PointCoord-0.5; float d=length(c); if(d>0.5)discard;
+            float a=smoothstep(0.5,0.05,d);
+            gl_FragColor=vec4(vCol*(0.6+vGlow*0.8), a*0.62);
+          }`
+      });
+      const pts=new THREE.Points(geo,mat); pts.frustumCulled=false; scene.add(pts);
+
+      // morph timing
+      const HOLD=2.4, DUR=2.0; let phase=0, last=performance.now()/1000;
+      return {
+        scene,cam,
+        update(t){
+          groundMat.uniforms.uTime.value=t; groundMat.uniforms.uAspect.value=innerWidth/innerHeight;
+          groundMat.uniforms.uMouse.value.set(P.nx*0.5+0.5,P.ny*0.5+0.5);
+          mat.uniforms.uTime.value=t;
+          const now=performance.now()/1000; const dt=Math.min(now-last,0.05); last=now;
+          if(!REDUCED){
+            phase+=dt;
+            if(phase<HOLD){ mat.uniforms.uMorph.value=0; }
+            else if(phase<HOLD+DUR){ const x=(phase-HOLD)/DUR; mat.uniforms.uMorph.value=x*x*(3.0-2.0*x); }
+            else {
+              // commit: target becomes new base, pick next target
+              const cur=shapes[(si+1)%shapes.length], nxt=shapes[(si+2)%shapes.length];
+              geo.attributes.position.copyArray(cur); geo.attributes.position.needsUpdate=true;
+              geo.attributes.aTarget.copyArray(nxt); geo.attributes.aTarget.needsUpdate=true;
+              si=(si+1)%shapes.length; phase=0; mat.uniforms.uMorph.value=0;
+            }
+          }
+          pts.rotation.y += 0.0009 + P.nx*0.01*0.0;
+          pts.rotation.y = pts.rotation.y*1.0; // keep spin
+          pts.rotation.x = P.ny*0.25; pts.rotation.z = P.nx*0.12;
+          pts.rotation.y += (P.nx*0.6 - (pts._ty||0))*0; // (cursor parallax via x/z above)
+        },
+        resize(){ cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix(); },
+        dispose(){ geo.dispose(); mat.dispose(); groundMat.dispose(); }
+      };
+    }
+
+    // ---------- mode controller ----------
+    const builders={fluid:modeFluid, points:modePoints, morph:modeMorph};
+    const names={fluid:'fluid field', points:'point mesh', morph:'morph bloom'};
+    let cur=null, curKey=null;
+    function setMode(key){
+      if(curKey===key) return;
+      if(cur){ cur.dispose && cur.dispose(); cur=null; }
+      cur=builders[key](); curKey=key;
+      document.getElementById('modeName').textContent=names[key];
+      document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',c.dataset.mode===key));
+    }
+    document.getElementById('switch').addEventListener('click',e=>{
+      const b=e.target.closest('.chip'); if(b) setMode(b.dataset.mode);
+    });
+
+    // ---------- resize ----------
+    window.addEventListener('resize',()=>{ sz(); cur && cur.resize && cur.resize(); });
+
+    // ---------- loop ----------
+    const clock=new THREE.Clock();
+    setMode('fluid');
+    function loop(){
+      requestAnimationFrame(loop);
+      P.nx+=(P.tnx-P.nx)*0.07; P.ny+=(P.tny-P.ny)*0.07;
+      const t=REDUCED?6.0:clock.getElapsedTime();
+      if(cur){ cur.update(t); renderer.render(cur.scene,cur.cam); }
+    }
+    loop();
+  })();
+  </script>
+</body>
+</html>
